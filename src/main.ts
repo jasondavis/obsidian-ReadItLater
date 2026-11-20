@@ -23,6 +23,8 @@ import { NoteService } from './NoteService';
 import { ReadItLaterApi } from './ReadtItLaterApi';
 import { BlueskyParser } from './parsers/BlueskyParser';
 import { PinterestParser } from './parsers/PinterestParser';
+import { ConverterRegistry } from './converters/ConverterRegistry';
+import { ScreenshotService } from './screenshot/ScreenshotService';
 
 export default class ReadItLaterPlugin extends Plugin {
     public api: ReadItLaterApi;
@@ -33,6 +35,16 @@ export default class ReadItLaterPlugin extends Plugin {
     private parserCreator: ParserCreator;
     private templateEngine: TemplateEngine;
     private vaultRepository: VaultRepository;
+    private converterRegistry: ConverterRegistry;
+    private screenshotService: ScreenshotService;
+
+    getConverterRegistry(): ConverterRegistry {
+        return this.converterRegistry;
+    }
+
+    getScreenshotService(): ScreenshotService {
+        return this.screenshotService;
+    }
 
     getFileSystemLimits(): FilesystemLimits {
         return this.fileSystemLimits;
@@ -47,6 +59,8 @@ export default class ReadItLaterPlugin extends Plugin {
 
         this.fileSystemLimits = getFileSystemLimits(Platform, this.settings);
         this.templateEngine = new TemplateEngine();
+        this.converterRegistry = new ConverterRegistry(this);
+        this.screenshotService = new ScreenshotService(this, this.templateEngine);
         this.parserCreator = new ParserCreator([
             new YoutubeParser(this.app, this, this.templateEngine),
             new YoutubeChannelParser(this.app, this, this.templateEngine),
@@ -64,7 +78,13 @@ export default class ReadItLaterPlugin extends Plugin {
             new TextSnippetParser(this.app, this, this.templateEngine),
         ]);
         this.vaultRepository = new DefaultVaultRepository(this, this.templateEngine);
-        this.noteService = new NoteService(this.parserCreator, this, this.vaultRepository);
+        this.noteService = new NoteService(
+            this.parserCreator,
+            this,
+            this.vaultRepository,
+            this.screenshotService,
+            this.templateEngine,
+        );
         this.api = new ReadItLaterApi(this.noteService);
 
         addIcon('read-it-later', clipboardIcon);
@@ -97,6 +117,35 @@ export default class ReadItLaterPlugin extends Plugin {
             },
         });
 
+        // One command per conversion provider to override the default provider for a single note
+        for (const converter of this.converterRegistry.getAll()) {
+            this.addCommand({
+                id: `create-from-clipboard-with-${converter.id}`,
+                name: `Create from clipboard using ${converter.name}`,
+                callback: async () => {
+                    await this.api.processContent(await this.getTextClipboardContent(), {
+                        conversionProvider: converter.id,
+                    });
+                },
+            });
+        }
+
+        this.addCommand({
+            id: 'create-screenshot-note-from-clipboard',
+            name: 'Create screenshot note from URL in clipboard',
+            callback: async () => {
+                await this.api.createScreenshotNote(await this.getTextClipboardContent());
+            },
+        });
+
+        this.addCommand({
+            id: 'insert-screenshot-at-cursor',
+            name: 'Insert screenshot of URL in clipboard at the cursor position',
+            editorCallback: async (editor: Editor) => {
+                await this.api.insertScreenshotAtCursor(await this.getTextClipboardContent(), editor);
+            },
+        });
+
         this.addSettingTab(new ReadItLaterSettingsTab(this.app, this));
 
         if (this.settings.extendShareMenu) {
@@ -121,6 +170,13 @@ export default class ReadItLaterPlugin extends Plugin {
                         item.setIcon('read-it-later');
                         item.onClick(() => this.api.processContent(url));
                     });
+                    if (this.screenshotService.isEnabled()) {
+                        menu.addItem((item: MenuItem) => {
+                            item.setTitle('ReadItLater: Save screenshot');
+                            item.setIcon('camera');
+                            item.onClick(() => this.api.createScreenshotNote(url));
+                        });
+                    }
                 }
             }),
         );

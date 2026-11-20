@@ -1,25 +1,12 @@
 import { Notice, Platform, RequestUrlResponse, requestUrl } from 'obsidian';
-import { Readability, isProbablyReaderable } from '@mozilla/readability';
 import * as DOMPurify from 'isomorphic-dompurify';
 import { getBaseUrl, normalizeFilename } from 'src/helpers/fileutils';
 import { replaceImages } from 'src/helpers/replaceImages';
 import { desktopBrowserUserAgent } from 'src/helpers/networkUtils';
+import { ConversionProvider } from 'src/enums/conversionProvider';
+import { ConversionResult, HtmlConverter } from 'src/converters/HtmlConverter';
 import { Note } from './Note';
-import { Parser } from './Parser';
-import { parseHtmlContent } from './parsehtml';
-
-interface ReadabilityArticle {
-    title: string;
-    content: string;
-    textContent: string;
-    length: number;
-    excerpt: string;
-    byline: string;
-    dir: string;
-    siteName: string;
-    lang: string;
-    publishedTime: string;
-}
+import { ParseOptions, Parser } from './Parser';
 
 interface WebsiteNoteData {
     date: string;
@@ -31,85 +18,150 @@ interface WebsiteNoteData {
     author: string;
     previewURL: string;
     publishedTime: string;
-    readabilityArticle: ReadabilityArticle;
+    /** Raw Readability article. Only populated when the Readability provider produced the note. */
+    readabilityArticle: unknown;
+    /** Raw response of the provider which produced the note. */
+    conversionResult: unknown;
+    conversionProvider: string;
+    articleExcerpt: string;
     articleOgDescription: string;
     articleMetaAuthor: string;
     articlePublishedTime: string;
 }
+
+const THIN_CONTENT_THRESHOLD = 100;
 
 class WebsiteParser extends Parser {
     test(url: string): boolean {
         return this.isValidUrl(url);
     }
 
-    async prepareNote(url: string): Promise<Note> {
+    async prepareNote(url: string, options?: ParseOptions): Promise<Note> {
         const originUrl = new URL(url);
-        const document = await this.getDocument(originUrl);
+        const provider = this.getConversionProvider(options);
+        const converter = this.plugin.getConverterRegistry().get(provider);
 
-        return this.makeNote(document, originUrl);
+        let document: Document | null;
+        try {
+            document = await this.getDocument(originUrl);
+        } catch (error) {
+            // Providers fetching the page by themselves (e.g. Jina Reader) can still succeed.
+            if (converter.requiresDocument) {
+                throw error;
+            }
+            console.warn(`ReadItLater: unable to fetch ${originUrl.href} locally, continuing with ${converter.name}`);
+            document = null;
+        }
+
+        return this.makeNote(document, originUrl, options);
     }
 
-    protected async makeNote(document: Document, originUrl: URL): Promise<Note> {
-        if (!isProbablyReaderable(document)) {
-            new Notice('@mozilla/readability considers this document to unlikely be readerable.');
-        }
+    protected getConversionProvider(options?: ParseOptions): ConversionProvider {
+        return (
+            options?.conversionProvider ??
+            (this.plugin.settings.htmlConversionProvider as ConversionProvider) ??
+            ConversionProvider.Readability
+        );
+    }
 
+    protected async makeNote(document: Document | null, originUrl: URL, options?: ParseOptions): Promise<Note> {
         const createdAt = new Date();
-        const previewUrl = this.extractPreviewUrl(document);
+        const previewUrl = document ? this.extractPreviewUrl(document) : null;
 
         // Extract OG/meta fields for template variables and thin-content fallback
-        const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? '';
-        const ogDescription = document.querySelector('meta[property="og:description"]')?.getAttribute('content') ?? '';
-        const ogSiteName = document.querySelector('meta[property="og:site_name"]')?.getAttribute('content') ?? '';
-        const metaAuthor =
-            document.querySelector('meta[name="author"]')?.getAttribute('content') ??
-            document.querySelector('meta[property="article:author"]')?.getAttribute('content') ??
-            '';
-        const rawPublishedTime =
-            document.querySelector('meta[property="article:published_time"]')?.getAttribute('content') ?? '';
+        const meta = (selector: string): string => document?.querySelector(selector)?.getAttribute('content') ?? '';
+        const ogTitle = meta('meta[property="og:title"]');
+        const ogDescription = meta('meta[property="og:description"]');
+        const ogSiteName = meta('meta[property="og:site_name"]');
+        const metaAuthor = meta('meta[name="author"]') || meta('meta[property="article:author"]');
+        const rawPublishedTime = meta('meta[property="article:published_time"]');
 
-        const readableDocument = new Readability(document).parse();
+        const article = await this.convertDocument(document, originUrl, this.getConversionProvider(options));
 
-        if (readableDocument === null || !Object.prototype.hasOwnProperty.call(readableDocument, 'content')) {
+        // Fall back to not-parsable path for missing or thin content (JS-rendered pages, paywalls, etc.)
+        if (article === null || article.textContent.trim().length < THIN_CONTENT_THRESHOLD) {
             return this.notParsableArticle(originUrl.href, previewUrl, createdAt, {
-                title: ogTitle,
+                title: article?.title || ogTitle,
                 description: ogDescription,
                 siteName: ogSiteName,
             });
         }
-
-        // Fall back to not-parsable path for thin content (JS-rendered pages, paywalls, etc.)
-        if (readableDocument.textContent.trim().length < 100) {
-            return this.notParsableArticle(originUrl.href, previewUrl, createdAt, {
-                title: ogTitle,
-                description: ogDescription,
-                siteName: ogSiteName,
-            });
-        }
-
-        const content = await parseHtmlContent(readableDocument.content);
 
         return this.parsableArticle(
             {
                 date: this.getFormattedDateForContent(createdAt),
-                articleTitle: readableDocument.title || ogTitle || 'No title',
+                articleTitle: article.title || ogTitle || 'No title',
                 articleURL: originUrl.href,
-                articleReadingTime: this.getEstimatedReadingTime(readableDocument),
-                articleContent: content,
-                siteName: readableDocument.siteName || ogSiteName || '',
-                author: readableDocument.byline || metaAuthor || '',
+                articleReadingTime: this.getEstimatedReadingTime(article),
+                articleContent: article.content,
+                siteName: article.siteName || ogSiteName || '',
+                author: article.author || metaAuthor || '',
                 previewURL: previewUrl || '',
-                publishedTime:
-                    readableDocument.publishedTime !== null
-                        ? this.getFormattedDateForContent(readableDocument.publishedTime)
-                        : '',
-                readabilityArticle: readableDocument,
+                publishedTime: article.publishedTime ? this.getFormattedDateForContent(article.publishedTime) : '',
+                readabilityArticle: article.provider === ConversionProvider.Readability ? article.raw : {},
+                conversionResult: article.raw,
+                conversionProvider: article.provider,
+                articleExcerpt: article.excerpt || ogDescription,
                 articleOgDescription: ogDescription,
                 articleMetaAuthor: metaAuthor,
                 articlePublishedTime: rawPublishedTime ? this.getFormattedDateForContent(rawPublishedTime) : '',
             },
             createdAt,
         );
+    }
+
+    /**
+     * Converts the page with the selected provider. When it fails and the fallback is enabled,
+     * the built-in Readability converter is used instead.
+     */
+    private async convertDocument(
+        document: Document | null,
+        url: URL,
+        provider: ConversionProvider,
+    ): Promise<ConversionResult | null> {
+        const registry = this.plugin.getConverterRegistry();
+        const converter = registry.get(provider);
+        const fallback = registry.getDefault();
+
+        let result: ConversionResult | null = null;
+        let failure: Error | null = null;
+        try {
+            result = await this.runConverter(converter, document, url);
+        } catch (error) {
+            console.error(`ReadItLater: ${converter.name} conversion failed`, error);
+            failure = error instanceof Error ? error : new Error(String(error));
+        }
+
+        const shouldFallback =
+            converter.id !== fallback.id &&
+            this.plugin.settings.conversionFallbackToReadability &&
+            document !== null &&
+            (result === null || result.textContent.trim().length < THIN_CONTENT_THRESHOLD);
+
+        if (shouldFallback) {
+            new Notice(
+                `ReadItLater: ${converter.name} ${
+                    failure ? `failed (${failure.message})` : 'found no content'
+                }. Falling back to ${fallback.name}.`,
+            );
+            return this.runConverter(fallback, document, url);
+        }
+
+        if (failure) {
+            throw failure;
+        }
+
+        return result;
+    }
+
+    private async runConverter(
+        converter: HtmlConverter,
+        document: Document | null,
+        url: URL,
+    ): Promise<ConversionResult | null> {
+        // Every converter gets its own copy because Readability and Defuddle mutate the DOM.
+        const documentCopy = document ? (document.cloneNode(true) as Document) : null;
+        return converter.convert({ url, document: documentCopy });
     }
 
     protected async getDocument(url: URL): Promise<Document> {
@@ -290,8 +342,8 @@ class WebsiteParser extends Parser {
     /**
      * Returns estimated reading time of article in minutes
      */
-    private getEstimatedReadingTime(article: ReadabilityArticle): number {
-        const readingSpeed = this.getReadingSpeed(article.lang || 'en');
+    private getEstimatedReadingTime(article: ConversionResult): number {
+        const readingSpeed = this.getReadingSpeed((article.lang || 'en').split('-')[0].toLowerCase());
         const words = article.textContent.trim().split(/\s+/).length;
 
         return Math.ceil(words / readingSpeed);

@@ -3,6 +3,8 @@
 ## Table of contents
 
 - [Introduction](#introduction)
+- [HTML to Markdown conversion providers](#html-to-markdown-conversion-providers)
+- [Screenshots](#screenshots)
 - [Content Types](#content-types)
     - [Website Article](#website-article)
     - [Youtube](#youtube)
@@ -31,12 +33,54 @@ ReadItLater can do a lot more than converting web pages to markdown. For every c
 - Compatibility with Obsidian iOS and Android apps
 - Downloading images from articles to your Vault
 - Batch processing of URLs list
+- Choice of HTML to markdown conversion provider: Mozilla Readability, Defuddle or Jina Reader API
+- Web page screenshots saved to your Vault and embedded with a template variable
 
 ### How to use ReadItLater plugin?
 
 To create single note you can either click on the plugin ribbon icon, select `ReadItLater: Create from clipboard` from command palette or click on `ReadItLater` shortcut in context or share menu. You can also create multiple notes from batch of URLs, delimited by selected delimiter in plugin settings using `ReadItLater: Create from batch in clipboard` command.
 
 If you want just add content to existing note, you can use `ReadItLater: Insert at the cursor position` command to insert content after the current cursor position.
+
+## HTML to Markdown conversion providers
+
+Website based content types (Website Article, Wikipedia, GitHub) are converted to markdown by the provider selected in **Settings → HTML to Markdown conversion → Conversion provider**:
+
+| Provider | Runs | Notes |
+| --- | --- | --- |
+| Mozilla Readability (default) | Locally | Original behavior of the plugin. Uses [Readability](https://github.com/mozilla/readability) and Turndown. |
+| Defuddle | Locally | Uses [Defuddle](https://github.com/kepano/defuddle), the extraction library behind Obsidian Web Clipper. Preserves footnotes, math, callouts and code blocks. |
+| Jina Reader API | [r.jina.ai](https://github.com/jina-ai/reader) | The page is rendered and converted by Jina, which helps with JavaScript-heavy pages. The URL is sent to Jina. An API key is optional (requests without key are rate limited). |
+
+If the selected provider fails or finds no content, the plugin falls back to Readability (can be disabled in settings). Each provider also gets its own command, e.g. `ReadItLater: Create from clipboard using Defuddle`, to override the default for a single note.
+
+New providers can be added by implementing the `HtmlConverter` interface (`src/converters/HtmlConverter.ts`), adding an entry to the `ConversionProvider` enum and registering it in `src/converters/ConverterRegistry.ts`.
+
+## Screenshots
+
+ReadItLater can capture a screenshot of the page, save it to your Vault and embed it in the note. Select a provider in **Settings → Screenshots**:
+
+- **Jina Reader API** – uses the Jina Reader `screenshot`/`pageshot` format. Shares the Jina API key with the conversion provider.
+- **Microlink API** – [microlink.io](https://microlink.io) screenshot API. Works without key on the free tier; an API key switches to the pro endpoint.
+- **Custom URL template** – any service returning an image for a GET request, e.g. `https://image.thum.io/get/width/{{ width }}/{{ url }}`. Variables: `{{ url }}`, `{{ encodedUrl }}`, `{{ width }}`, `{{ fullPage }}`.
+
+Screenshots are captured only when a note template contains one of the following variables. They work in **every** content type template that is created from a URL:
+
+| Screenshot template variable | Description |
+| --- | --- |
+| screenshot | Markdown image embed of the saved screenshot, e.g. `![Screenshot](ReadItLater%20Inbox/assets/Title-screenshot.png)` |
+| screenshotPath | Vault path of the saved screenshot, useful for wiki embeds: `![[{{ screenshotPath }}\|600]]` |
+| screenshotURL | Hosted screenshot URL (Jina Reader only, empty otherwise) |
+
+Screenshots are stored in the `Screenshot directory` setting, or in the assets directory when empty. Both support the [directory template variables](#inbox-and-assets-directories).
+
+Commands:
+
+- `ReadItLater: Create screenshot note from URL in clipboard` – creates a note from the *Screenshot* note template (variables `url`, `domain`, `date` and the screenshot variables above).
+- `ReadItLater: Insert screenshot of URL in clipboard at the cursor position` – saves the screenshot and inserts its embed into the current note.
+- `ReadItLater: Save screenshot` item in the URL context menu.
+
+New screenshot providers can be added by implementing `ScreenshotProvider` (`src/screenshot/ScreenshotProvider.ts`) and registering it in `src/screenshot/ScreenshotService.ts`.
 
 ## Template engine
 
@@ -134,7 +178,7 @@ Available content types are ordered by URL detection priority.
 
 ### Website Article
 
-Will be parsed to readable form using [Mozilla Readability](https://github.com/mozilla/readability) and then converted to markdown. In case website content is marked by [Readbility](https://github.com/mozilla/readability) as not readable, empty note with URL will be created.
+Will be parsed to readable form and converted to markdown by the selected [conversion provider](#html-to-markdown-conversion-providers) (default [Mozilla Readability](https://github.com/mozilla/readability)). In case no readable content is found, empty note with URL will be created.
 
 If enabled, images will be downloaded to folder (default is `ReadItLater Inbox/assets`) configured in plugin settings. (Supported only on desktop for now)
 
@@ -152,6 +196,13 @@ If enabled, images will be downloaded to folder (default is `ReadItLater Inbox/a
 | date                      | Current date in format from plugin settings                                                                                                                                               |
 | previewURL                | Aritlce preview image URL parsed from [OpenGraph](https://ogp.me/) or [Twitter](https://developer.twitter.com/en/docs/twitter-for-websites/cards/overview/markup) image `<meta>` property |
 | publishedTime             | Article publish time parsed from [OpenGraph](https://ogp.me/) `<meta>` property or [Schema.org](https://schema.org/) JSON and formatted in content format from plugin settings            |
+| siteName                  | Site name                                                                                                                                                                                 |
+| author                    | Article author                                                                                                                                                                            |
+| articleExcerpt            | Article excerpt/description reported by the conversion provider                                                                                                                           |
+| conversionProvider        | Provider which produced the note: `readability`, `defuddle` or `jinaReader`                                                                                                               |
+| conversionResult          | Raw provider result for advanced use, e.g. `{{ conversionResult.wordCount }}` with Defuddle                                                                                              |
+| readabilityArticle        | Raw Readability article (only when Readability produced the note)                                                                                                                         |
+| screenshot, screenshotPath, screenshotURL | See [Screenshots](#screenshots)                                                                                                                                           |
 
 ### Youtube
 

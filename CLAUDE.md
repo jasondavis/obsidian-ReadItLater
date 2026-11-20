@@ -36,6 +36,9 @@ There are no automated tests. The build output is a single `main.js` file bundle
 - **`src/repository/DefaultVaultRepository.ts`** — Vault I/O: creates directories (supports path templating with `date`/`fileName`/`contentType` variables), handles file existence, appends content
 - **`src/settings.ts`** — 80+ settings; per-content-type title template, note template, and content slug; also defines available template filters
 
+- **`src/converters/`** — HTML→markdown providers (`HtmlConverter` interface): `ReadabilityConverter` (default), `DefuddleConverter`, `JinaReaderConverter`, registered in `ConverterRegistry`. `WebsiteParser` picks one from `htmlConversionProvider` (or `ParseOptions.conversionProvider` override) and falls back to Readability
+- **`src/screenshot/`** — `ScreenshotProvider` implementations (Jina, Microlink, custom URL) and `ScreenshotService`, which saves screenshots to the vault. `NoteService.makeNote` resolves `{{ screenshot }}`/`{{ screenshotPath }}`/`{{ screenshotURL }}` placeholders left unresolved by parsers, so screenshots work for every content type
+
 ### Adding a New Parser
 
 1. Create `src/parsers/MyParser.ts` extending `Parser`

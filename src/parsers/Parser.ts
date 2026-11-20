@@ -3,7 +3,13 @@ import TemplateEngine from 'src/template/TemplateEngine';
 import ReadItLaterPlugin from 'src/main';
 import { isValidUrl } from 'src/helpers/fileutils';
 import { formatDate } from 'src/helpers/date';
+import { ConversionProvider } from 'src/enums/conversionProvider';
 import { Note } from './Note';
+
+export interface ParseOptions {
+    /** Overrides the HTML to markdown conversion provider selected in settings for this run. */
+    conversionProvider?: ConversionProvider;
+}
 
 export abstract class Parser {
     protected app: App;
@@ -18,7 +24,7 @@ export abstract class Parser {
 
     abstract test(clipboardContent: string): boolean | Promise<boolean>;
 
-    abstract prepareNote(clipboardContent: string): Promise<Note>;
+    abstract prepareNote(clipboardContent: string, options?: ParseOptions): Promise<Note>;
 
     protected isValidUrl(url: string): boolean {
         return isValidUrl(url);
