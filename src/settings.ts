@@ -1,7 +1,19 @@
 import { Delimiter } from './enums/delimiter';
 import { FileExistsStrategy } from './enums/fileExistsStrategy';
+import { ConversionProvider } from './enums/conversionProvider';
+import { ScreenshotProvider } from './enums/screenshotProvider';
+import { DEFAULT_JINA_READER_ENDPOINT } from './helpers/jinaReader';
+import { DEFAULT_SCREENSHOT_URL_TEMPLATE } from './screenshot/CustomUrlScreenshotProvider';
 
-export type ReadItLaterSettingValue = string | number | boolean | Delimiter | FileExistsStrategy | null;
+export type ReadItLaterSettingValue =
+    | string
+    | number
+    | boolean
+    | Delimiter
+    | FileExistsStrategy
+    | ConversionProvider
+    | ScreenshotProvider
+    | null;
 
 export interface ReadItLaterSettings {
     [key: string]: ReadItLaterSettingValue;
@@ -81,6 +93,21 @@ export interface ReadItLaterSettings {
     pinterestNoteTitle: string;
     pinterestNote: string;
     downloadPinterestImage: boolean;
+    htmlConversionProvider: ConversionProvider;
+    conversionFallbackToReadability: boolean;
+    jinaReaderApiKey: string;
+    jinaReaderEndpoint: string;
+    jinaReaderTargetSelector: string;
+    jinaReaderGeneratedAlt: boolean;
+    screenshotProvider: ScreenshotProvider;
+    screenshotFullPage: boolean;
+    screenshotViewportWidth: string;
+    screenshotAssetsDir: string;
+    screenshotCustomUrlTemplate: string;
+    microlinkApiKey: string;
+    screenshotContentTypeSlug: string;
+    screenshotNoteTitle: string;
+    screenshotNote: string;
 }
 
 export const DEFAULT_SETTINGS: ReadItLaterSettings = {
@@ -167,4 +194,19 @@ export const DEFAULT_SETTINGS: ReadItLaterSettings = {
     pinterestNote:
         '[[ReadItLater]] [[Pinterest]]\n\n# [{{ authorName }}]({{ pinURL }})\n\n![]({{ image }})\n{{ description }}',
     downloadPinterestImage: true,
+    htmlConversionProvider: ConversionProvider.Readability,
+    conversionFallbackToReadability: true,
+    jinaReaderApiKey: '',
+    jinaReaderEndpoint: DEFAULT_JINA_READER_ENDPOINT,
+    jinaReaderTargetSelector: '',
+    jinaReaderGeneratedAlt: false,
+    screenshotProvider: ScreenshotProvider.JinaReader,
+    screenshotFullPage: false,
+    screenshotViewportWidth: '1280',
+    screenshotAssetsDir: '',
+    screenshotCustomUrlTemplate: DEFAULT_SCREENSHOT_URL_TEMPLATE,
+    microlinkApiKey: '',
+    screenshotContentTypeSlug: 'screenshot',
+    screenshotNoteTitle: 'Screenshot {{ domain }} {{ date }}',
+    screenshotNote: '[[ReadItLater]] [[Screenshot]]\n\n# [{{ url }}]({{ url }})\n\n{{ screenshot }}',
 };

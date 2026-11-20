@@ -1,4 +1,5 @@
 import { Note } from './Note';
+import { ParseOptions } from './Parser';
 import WebsiteParser from './WebsiteParser';
 
 export default class GithubParser extends WebsiteParser {
@@ -8,7 +9,7 @@ export default class GithubParser extends WebsiteParser {
         return this.isValidUrl(url) && this.PATTERN.test(url);
     }
 
-    async prepareNote(url: string): Promise<Note> {
+    async prepareNote(url: string, options?: ParseOptions): Promise<Note> {
         const originUrl = new URL(url);
         const document = await this.getDocument(originUrl);
 
@@ -20,6 +21,6 @@ export default class GithubParser extends WebsiteParser {
             document.querySelector('body').innerHTML = readme.outerHTML;
         }
 
-        return this.makeNote(document, originUrl);
+        return this.makeNote(document, originUrl, options);
     }
 }

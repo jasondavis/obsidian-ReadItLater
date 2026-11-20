@@ -5,6 +5,8 @@ import { getDefaultFilesystenLimits } from 'src/helpers/fileutils';
 import { createHTMLDiv } from 'src/helpers/setting';
 import ReadItLaterPlugin from 'src/main';
 import { DEFAULT_SETTINGS } from 'src/settings';
+import { ConversionProvider, getConversionProviderOptions } from 'src/enums/conversionProvider';
+import { ScreenshotProvider, getScreenshotProviderOptions } from 'src/enums/screenshotProvider';
 
 enum DetailsItem {
     ReadableArticle = 'readableArticle',
@@ -20,6 +22,7 @@ enum DetailsItem {
     TikTok = 'tikTok',
     NonReadableArticle = 'nonReadableArticle',
     TextSnippet = 'textSnippet',
+    Screenshot = 'screenshot',
 }
 
 export class ReadItLaterSettingsTab extends PluginSettingTab {
@@ -205,6 +208,9 @@ export class ReadItLaterSettingsTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     }),
             );
+
+        this.displayConversionSettings(containerEl);
+        this.displayScreenshotSettings(containerEl);
 
         containerEl.createEl('h1', { text: 'Content Types' });
         containerEl.createDiv({ text: 'Settings for each content. Click on caret to expand.' });
@@ -1252,6 +1258,44 @@ export class ReadItLaterSettingsTab extends PluginSettingTab {
                 textarea.inputEl.cols = 25;
             });
 
+        containerEl.createEl('hr', { cls: 'readitlater-setting-hr' });
+        detailsEl = this.createDetailsElement(containerEl, DetailsItem.Screenshot);
+        detailsEl.createEl('summary', {
+            text: 'Screenshot',
+            cls: 'readitlater-setting-h3',
+        });
+
+        this.addTextSetting(
+            detailsEl,
+            'Screenshot content type slug',
+            this.createTemplateVariableReferenceDiv(),
+            'screenshotContentTypeSlug',
+        );
+        this.addTextSetting(
+            detailsEl,
+            'Screenshot note template title',
+            this.createTemplateVariableReferenceDiv('Available variables: url, domain, date.'),
+            'screenshotNoteTitle',
+        );
+
+        new Setting(detailsEl)
+            .setName('Screenshot note template')
+            .setDesc(
+                this.createTemplateVariableReferenceDiv(
+                    'Used by the "Create screenshot note" command. Available variables: url, domain, date, screenshot, screenshotPath, screenshotURL.',
+                ),
+            )
+            .addTextArea((textarea) => {
+                textarea
+                    .setValue(this.plugin.settings.screenshotNote || DEFAULT_SETTINGS.screenshotNote)
+                    .onChange(async (value) => {
+                        this.plugin.settings.screenshotNote = value;
+                        await this.plugin.saveSettings();
+                    });
+                textarea.inputEl.rows = 10;
+                textarea.inputEl.cols = 25;
+            });
+
         containerEl.createEl('h2', { text: 'Advanced' });
 
         const defaultFilesystemLimits = getDefaultFilesystenLimits(Platform);
@@ -1293,6 +1337,184 @@ export class ReadItLaterSettingsTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }),
             );
+    }
+
+    private displayConversionSettings(containerEl: HTMLElement): void {
+        containerEl.createEl('h2', { text: 'HTML to Markdown conversion' });
+
+        new Setting(containerEl)
+            .setName('Conversion provider')
+            .setDesc(
+                createHTMLDiv(
+                    '<p>Provider used to extract the article and convert it to markdown for website based content types (Readable Article, Wikipedia, GitHub). ' +
+                        'Each provider also has a "Create from clipboard using …" command to override this choice for a single note.</p>' +
+                        '<p><b>Mozilla Readability</b>: built-in default. <b>Defuddle</b>: built-in, keeps more of the page (footnotes, math, callouts). ' +
+                        '<b>Jina Reader API</b>: the page is fetched and rendered by r.jina.ai (works for JavaScript-heavy pages; the URL is sent to Jina).</p>',
+                ),
+            )
+            .addDropdown((dropdown) => {
+                getConversionProviderOptions().forEach((option) => dropdown.addOption(option.option, option.label));
+                dropdown.setValue(
+                    this.plugin.settings.htmlConversionProvider || DEFAULT_SETTINGS.htmlConversionProvider,
+                );
+                dropdown.onChange(async (value) => {
+                    this.plugin.settings.htmlConversionProvider = value as ConversionProvider;
+                    await this.plugin.saveSettings();
+                    this.display();
+                });
+            });
+
+        new Setting(containerEl)
+            .setName('Fall back to Readability')
+            .setDesc('If the selected provider fails or finds no content, convert the page with Mozilla Readability.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.conversionFallbackToReadability ?? true)
+                    .onChange(async (value) => {
+                        this.plugin.settings.conversionFallbackToReadability = value;
+                        await this.plugin.saveSettings();
+                    }),
+            );
+
+        const usesJina =
+            this.plugin.settings.htmlConversionProvider === ConversionProvider.JinaReader ||
+            this.plugin.settings.screenshotProvider === ScreenshotProvider.JinaReader;
+        if (!usesJina) {
+            return;
+        }
+
+        containerEl.createEl('h3', { text: 'Jina Reader' });
+
+        this.addTextSetting(
+            containerEl,
+            'Jina Reader API key',
+            createHTMLDiv(
+                '<p>Optional. Requests without a key are rate limited. Get a key at <a href="https://jina.ai/reader">jina.ai/reader</a>. Shared by conversion and screenshots.</p>',
+            ),
+            'jinaReaderApiKey',
+            true,
+        );
+        this.addTextSetting(
+            containerEl,
+            'Jina Reader endpoint',
+            'Change only when using a self-hosted Jina Reader instance.',
+            'jinaReaderEndpoint',
+        );
+        this.addTextSetting(
+            containerEl,
+            'Target CSS selector',
+            'Optional. Only convert the elements matching this CSS selector (X-Target-Selector header).',
+            'jinaReaderTargetSelector',
+        );
+
+        new Setting(containerEl)
+            .setName('Generate image alt text')
+            .setDesc('Let Jina generate captions for images without alt text (X-With-Generated-Alt header).')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.jinaReaderGeneratedAlt ?? false).onChange(async (value) => {
+                    this.plugin.settings.jinaReaderGeneratedAlt = value;
+                    await this.plugin.saveSettings();
+                }),
+            );
+    }
+
+    private displayScreenshotSettings(containerEl: HTMLElement): void {
+        containerEl.createEl('h2', { text: 'Screenshots' });
+        containerEl.createDiv({
+            text: 'Add {{ screenshot }} (markdown image), {{ screenshotPath }} (vault path, e.g. ![[{{ screenshotPath }}|600]]) or {{ screenshotURL }} (hosted URL, Jina only) to any note template. A screenshot of the URL is captured and saved to the vault only when the template contains one of these variables.',
+            cls: 'setting-item-description',
+        });
+
+        new Setting(containerEl)
+            .setName('Screenshot provider')
+            .setDesc('Service used to capture web page screenshots.')
+            .addDropdown((dropdown) => {
+                getScreenshotProviderOptions().forEach((option) => dropdown.addOption(option.option, option.label));
+                dropdown.setValue(this.plugin.settings.screenshotProvider || DEFAULT_SETTINGS.screenshotProvider);
+                dropdown.onChange(async (value) => {
+                    this.plugin.settings.screenshotProvider = value as ScreenshotProvider;
+                    await this.plugin.saveSettings();
+                    this.display();
+                });
+            });
+
+        const provider = this.plugin.settings.screenshotProvider;
+        if (provider === ScreenshotProvider.None) {
+            return;
+        }
+
+        new Setting(containerEl)
+            .setName('Full page screenshot')
+            .setDesc('Capture the whole page instead of the first screen. Not supported by every custom service.')
+            .addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.screenshotFullPage ?? false).onChange(async (value) => {
+                    this.plugin.settings.screenshotFullPage = value;
+                    await this.plugin.saveSettings();
+                }),
+            );
+
+        this.addTextSetting(
+            containerEl,
+            'Viewport width',
+            'Browser width in pixels used to render the page (Microlink and custom URL template).',
+            'screenshotViewportWidth',
+        );
+        this.addTextSetting(
+            containerEl,
+            'Screenshot directory',
+            'Optional. Directory for screenshots, supports the same variables as the assets directory. Defaults to the assets directory.',
+            'screenshotAssetsDir',
+        );
+
+        if (provider === ScreenshotProvider.Microlink) {
+            this.addTextSetting(
+                containerEl,
+                'Microlink API key',
+                createHTMLDiv(
+                    '<p>Optional. Without a key the free tier of <a href="https://microlink.io">microlink.io</a> is used (limited daily requests).</p>',
+                ),
+                'microlinkApiKey',
+                true,
+            );
+        }
+
+        if (provider === ScreenshotProvider.CustomUrl) {
+            this.addTextSetting(
+                containerEl,
+                'Screenshot URL template',
+                'URL returning the image for a GET request. Variables: {{ url }}, {{ encodedUrl }}, {{ width }}, {{ fullPage }}.',
+                'screenshotCustomUrlTemplate',
+            );
+        }
+    }
+
+    private addTextSetting(
+        containerEl: HTMLElement,
+        name: string,
+        desc: string | DocumentFragment,
+        key: string,
+        isSecret: boolean = false,
+    ): void {
+        new Setting(containerEl)
+            .setName(name)
+            .setDesc(desc)
+            .addText((text) => {
+                const defaultValue = String(DEFAULT_SETTINGS[key] ?? '');
+                const currentValue = this.plugin.settings[key];
+                text.setPlaceholder(defaultValue)
+                    .setValue(
+                        typeof currentValue === 'undefined' || currentValue === null
+                            ? defaultValue
+                            : String(currentValue),
+                    )
+                    .onChange(async (value) => {
+                        this.plugin.settings[key] = value;
+                        await this.plugin.saveSettings();
+                    });
+                if (isSecret) {
+                    text.inputEl.type = 'password';
+                }
+            });
     }
 
     private createDetailsElement(parentElement: HTMLElement, itemId: DetailsItem): HTMLElement {
